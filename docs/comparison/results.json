@@ -1,0 +1,153 @@
+[
+  {
+    "fixture": "flow",
+    "liveVersion": "v12.2.0",
+    "appVersion": "12.2.0",
+    "reference": {
+      "viewBox": null,
+      "bounds": {
+        "x": 12,
+        "y": 12,
+        "width": 646.125,
+        "height": 77.94230651855469
+      },
+      "labels": [
+        "crea",
+        "Idea",
+        "Diagramma",
+        "Archivio"
+      ],
+      "colors": [
+        "rgb(255, 228, 163)",
+        "rgb(215, 244, 229)",
+        "rgb(215, 244, 229)",
+        "rgb(215, 244, 229)",
+        "rgb(215, 244, 229)"
+      ]
+    },
+    "actual": {
+      "viewBox": "4 4 662.125 93.94230651855469",
+      "bounds": {
+        "x": 12,
+        "y": 12,
+        "width": 646.125,
+        "height": 77.94230651855469
+      },
+      "labels": [
+        "crea",
+        "Idea",
+        "Diagramma",
+        "Archivio"
+      ],
+      "colors": [
+        "rgb(255, 228, 163)",
+        "rgb(215, 244, 229)",
+        "rgb(215, 244, 229)",
+        "rgb(215, 244, 229)",
+        "rgb(215, 244, 229)"
+      ]
+    }
+  },
+  {
+    "fixture": "sequence",
+    "liveVersion": "v12.2.0",
+    "appVersion": "12.2.0",
+    "reference": {
+      "viewBox": null,
+      "bounds": {
+        "x": 51.43492126464844,
+        "y": 0,
+        "width": 298.5650634765625,
+        "height": 254.23915100097656
+      },
+      "labels": [
+        "App",
+        "App",
+        "Utente",
+        "Apri diagramma",
+        "Anteprima",
+        "Utente"
+      ],
+      "colors": [
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)"
+      ]
+    },
+    "actual": {
+      "viewBox": "-50 -10 450 305",
+      "bounds": {
+        "x": 51.4296875,
+        "y": 0,
+        "width": 298.5703125,
+        "height": 254
+      },
+      "labels": [
+        "App",
+        "App",
+        "Utente",
+        "Apri diagramma",
+        "Anteprima",
+        "Utente"
+      ],
+      "colors": [
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)",
+        "rgb(31, 32, 32)"
+      ]
+    }
+  },
+  {
+    "fixture": "state",
+    "liveVersion": "v12.2.0",
+    "appVersion": "12.2.0",
+    "reference": {
+      "viewBox": null,
+      "bounds": {
+        "x": 12,
+        "y": 12,
+        "width": 136,
+        "height": 238
+      },
+      "labels": [
+        "Salva",
+        "Modifica",
+        "Bozza",
+        "Salvato"
+      ],
+      "colors": [
+        "rgb(205, 228, 152)",
+        "rgb(205, 228, 152)",
+        "rgb(205, 228, 152)",
+        "rgb(205, 228, 152)"
+      ]
+    },
+    "actual": {
+      "viewBox": "4 4 152 254",
+      "bounds": {
+        "x": 12,
+        "y": 12,
+        "width": 136,
+        "height": 238
+      },
+      "labels": [
+        "Salva",
+        "Modifica",
+        "Bozza",
+        "Salvato"
+      ],
+      "colors": [
+        "rgb(205, 228, 152)",
+        "rgb(205, 228, 152)",
+        "rgb(205, 228, 152)",
+        "rgb(205, 228, 152)"
+      ]
+    }
+  }
+]

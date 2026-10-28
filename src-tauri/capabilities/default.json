@@ -1,0 +1,6 @@
+{
+  "identifier": "main",
+  "description": "Main window events and image clipboard only",
+  "windows": ["main"],
+  "permissions": ["core:default", "clipboard-manager:allow-write-image"]
+}

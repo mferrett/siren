@@ -1,0 +1,46 @@
+{
+  "name": "mermaid-free-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run tests/core.test.ts",
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
+    "dompurify": "3.4.17",
+    "jspdf": "^4.0.0",
+    "mermaid": "^12.2.0",
+    "monaco-editor": "^0.57.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "svg2pdf.js": "^2.7.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@tauri-apps/cli": "^2.10.0",
+    "@types/node": "^26.6.5",
+    "@types/pako": "^2.0.4",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "pako": "^3.0.3",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.0",
+    "vitest": "^5.0.5"
+  },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "3.4.17"
+    }
+  }
+}

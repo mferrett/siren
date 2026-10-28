@@ -1,0 +1,1 @@
+{"main":{"identifier":"main","description":"Main window events and image clipboard only","local":true,"windows":["main"],"permissions":["core:default","clipboard-manager:allow-write-image"]}}
