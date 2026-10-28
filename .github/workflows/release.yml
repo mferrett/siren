@@ -1,0 +1,93 @@
+name: Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            args: --bundles nsis
+            bundle_glob: src-tauri/target/release/bundle/nsis/*.exe
+          - platform: macos-arm64
+            os: macos-latest
+            args: --target aarch64-apple-darwin --bundles dmg
+            bundle_glob: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-arm64' && 'aarch64-apple-darwin' || '' }}
+      - run: npm ci
+      - run: npm run tauri -- build ${{ matrix.args }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: siren-${{ matrix.platform }}
+          path: ${{ matrix.bundle_glob }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+      - name: Prepare release metadata
+        id: meta
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "tag=v${version}-build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          cd dist-release
+          sha256sum * > SHA256SUMS.txt
+          {
+            echo 'checksums<<EOF'
+            sed 's/^/    /' SHA256SUMS.txt
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Siren ${{ steps.meta.outputs.version }} (build ${{ github.run_number }})
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist-release/*
+          body: |
+            ## Downloads
+
+            | Platform | File |
+            | --- | --- |
+            | Windows (x64) | `*.exe` installer (NSIS) |
+            | macOS (Apple Silicon, arm64) | `*.dmg` |
+
+            ## Installation notes
+
+            Builds are not code-signed or notarized.
+            - **macOS:** open the `.dmg`, drag Siren to Applications; on first launch right-click the app and choose **Open** (or run `xattr -dr com.apple.quarantine /Applications/Siren.app`).
+            - **Windows:** run the installer; if SmartScreen appears, choose **More info** > **Run anyway**.
+
+            ## SHA-256 checksums
+
+            ${{ steps.meta.outputs.checksums }}
+
+            Commit: ${{ github.sha }}
