@@ -174,7 +174,7 @@ export default function App() {
   }
   async function saveDocument(d: Diagram, as = false): Promise<boolean> {
     try {
-      if (as) {
+      if (as || (desktop && !d.path)) {
         const path = await saveBytes(
           `${d.name.replace(/\.(mmd|mermaid)$/i, "")}.mmd`,
           new TextEncoder().encode(d.code),
@@ -744,6 +744,16 @@ export default function App() {
                     }}
                   >
                     Rename
+                  </button>
+                  <button
+                    role="menuitem"
+                    disabled={!target.path || !desktop}
+                    onClick={() => {
+                      setContextMenu(null);
+                      void revealInFinder(target);
+                    }}
+                  >
+                    {revealLabel}
                   </button>
                   <button
                     role="menuitem"
