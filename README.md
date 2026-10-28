@@ -60,9 +60,11 @@ npm audit
 npm run tauri -- build
 # macOS application bundle only, local debug build
 npm run tauri -- build --debug --bundles app
-# Windows installer
+# Windows installer (must run on Windows)
 npm run tauri -- build --bundles nsis
 ```
+
+The Windows installer cannot be built on macOS: without `--target`, Tauri builds for the host platform and produces a macOS (Mach-O) binary, ignoring `--bundles nsis`. Build it on Windows, or let the **Release** GitHub Actions workflow (`.github/workflows/release.yml`) build it: on every push to `main` it publishes a GitHub release with the Windows NSIS installer, the macOS arm64 `.dmg`, SHA-256 checksums, and auto-generated notes.
 
 Output is written to `src-tauri/target/release/bundle/` (or `debug/bundle/`). macOS produces `.app`/`.dmg`; Windows produces NSIS/MSI installers depending on the selected targets. The configuration does not automatically sign or publish packages. Unsigned macOS builds are suitable for local verification; public distribution requires code signing and notarization.
 
@@ -172,3 +174,7 @@ src/lib/export.ts            SVG, PNG, PDF export and image clipboard
 src-tauri/src/lib.rs         atomic archive, window state, file access, OS menu
 tests/                       unit tests and Playwright E2E scenarios
 ```
+
+## License
+
+Released under the [MIT License](LICENSE).
