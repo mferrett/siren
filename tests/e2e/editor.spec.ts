@@ -338,6 +338,14 @@ test("splitter drag, cursor-anchored wheel zoom and tab reordering", async ({
   expect(Math.abs((cx - after.x) / after.width - 0.25)).toBeLessThan(0.02);
   expect(Math.abs((cy - after.y) / after.height - 0.25)).toBeLessThan(0.02);
 
+  const zoomed = parseInt((await label.textContent())!);
+  await page.mouse.dblclick(cx, cy);
+  await expect
+    .poll(async () => parseInt((await label.textContent())!))
+    .toBeGreaterThanOrEqual(Math.min(800, zoomed * 2) - 1);
+  const doubled = (await svg.boundingBox())!;
+  expect(Math.abs((cx - doubled.x) / doubled.width - 0.25)).toBeLessThan(0.02);
+
   await page.locator(".document-card").first().click({ button: "right" });
   await page.getByRole("menuitem", { name: "Duplicate" }).click();
   const labels = page.locator(".tab-item .tab-label");

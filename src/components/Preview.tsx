@@ -150,6 +150,15 @@ export const Preview = memo(function Preview({
       }}
       onPointerUp={() => (drag.current = null)}
       onPointerCancel={() => (drag.current = null)}
+      onDoubleClick={(e) => {
+        if ((e.target as HTMLElement).closest("button")) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        zoomTo(
+          view.current.scale * 2,
+          e.clientX - rect.left - rect.width / 2,
+          e.clientY - rect.top - rect.height / 2,
+        );
+      }}
     >
       {!svg && (
         <div className="empty-preview">Your diagram will appear here</div>
