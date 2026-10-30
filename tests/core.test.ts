@@ -78,6 +78,33 @@ describe("Flowchart structural collapse", () => {
     expect(both).toContain("X --> Outer");
     expect(both).not.toContain('Inner["Inner"]');
   });
+  it("collapses members declared outside the subgraph and rich edge syntax", () => {
+    const source = [
+      "flowchart TB",
+      'A["a"]:::c',
+      'B[("b")]',
+      "%% @collapse id=G label=\"Group\"",
+      'subgraph G["g"]',
+      "A",
+      "B",
+      "end",
+      "X --> A & Y",
+      "X -- text --> B",
+      'Y -. "t" .-> A',
+      "X e1@--> A",
+      "A@{ shape: rect }",
+      "class e1,A c",
+      "classDef c fill:#fff",
+    ].join("\n");
+    const result = collapseFlowchart(source, ["G"]);
+    expect(result).toContain('G["Group"]');
+    expect(result).toContain("X --> G");
+    expect(result).toContain("X -- text --> G");
+    expect(result).toContain("X e1@--> G");
+    expect(result).toContain("class e1 c");
+    expect(result).not.toMatch(/^A/m);
+    expect(result).not.toContain("B[(");
+  });
   it("rejects unsupported syntax instead of damaging source", () => {
     const source = examples["Flowchart · groups"] + "\nlinkStyle 0 stroke:red";
     expect(() => collapseFlowchart(source, ["PAS"])).toThrow("linkStyle");

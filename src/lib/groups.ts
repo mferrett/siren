@@ -10,7 +10,19 @@ type Statement =
   | { kind: "raw"; raw: string; owner?: string }
   | { kind: "group"; id: string; raw: string; owner?: string }
   | { kind: "end"; id: string }
-  | { kind: "nodes"; nodes: Node[]; edges: string[]; owner?: string };
+  | { kind: "class"; ids: string[]; cls: string; owner?: string }
+  | { kind: "style"; id: string; raw: string; owner?: string }
+  | {
+      kind: "nodes";
+      groups: Node[][];
+      edges: string[];
+      raw: string;
+      owner?: string;
+    };
+const EDGE_TEXT =
+  /^(?:[A-Za-z_][\w-]*@)?[<ox]?(?:--|==|-\.)\s+.+?\s+(?:-{2,}[>ox-]?|={2,}[>ox]?|\.-[>ox]?)(?=\s)\s*/;
+const EDGE_PLAIN =
+  /^(?:[A-Za-z_][\w-]*@)?[<ox]?(?:-{2,}[>ox-]?|={2,}[>ox]?|-\.+-[>ox]?|~{3,})(?:\|[^|\n]*\|)?\s*/;
 export function groupMetadata(source: string): { id: string; label: string }[] {
   return Array.from(
     source.matchAll(/^\s*%%\s*@collapse\s+id=([\w-]+)\s+label="([^"]+)"\s*$/gm),
@@ -43,7 +55,20 @@ function nodeAt(s: string): [Node, string] {
     throw new Error("Multiline labels are not supported for group collapsing");
   const cls = s.slice(i).match(/^:::[\w-]+/);
   if (cls) i += cls[0].length;
+  const shape = s.slice(i).match(/^@\{[^}]*\}/);
+  if (shape) i += shape[0].length;
   return [{ id: m[1], raw: s.slice(0, i) }, s.slice(i).trim()];
+}
+function endpointsAt(s: string): [Node[], string] {
+  const group: Node[] = [];
+  let rest = s;
+  for (;;) {
+    let n: Node;
+    [n, rest] = nodeAt(rest);
+    group.push(n);
+    if (!rest.startsWith("&")) return [group, rest];
+    rest = rest.slice(1).trim();
+  }
 }
 function parse(source: string) {
   const groups = new Map<string, Group>();
@@ -95,43 +120,65 @@ function parse(source: string) {
       statements.push({ kind: "raw", raw: line, owner });
       continue;
     }
-    if (/^(style|class|linkStyle|click)\b/.test(s))
+    if (/^(linkStyle|click)\s/.test(s))
       throw new Error(
-        "Group collapsing: standalone style, class, linkStyle, and click statements are not supported; use classDef and :::class on nodes.",
+        "Group collapsing: linkStyle and click statements are not supported.",
       );
-    const nodes: Node[] = [];
+    const cm = s.match(/^class\s+(\S+)\s+([\w-]+)$/);
+    if (cm) {
+      statements.push({
+        kind: "class",
+        ids: cm[1].split(","),
+        cls: cm[2],
+        owner,
+      });
+      continue;
+    }
+    const sm = s.match(/^style\s+([A-Za-z_][\w-]*)\s+.+$/);
+    if (sm) {
+      statements.push({ kind: "style", id: sm[1], raw: line, owner });
+      continue;
+    }
+    if (/^(style|class)\s/.test(s))
+      throw new Error(`Group collapsing: unsupported syntax at line ${idx + 1}.`);
+    const groupsList: Node[][] = [];
     const edges: string[] = [];
     let rest = s;
-    let n: Node;
-    [n, rest] = nodeAt(rest);
-    nodes.push(n);
+    let n: Node[];
+    [n, rest] = endpointsAt(rest);
+    groupsList.push(n);
     while (rest) {
-      const edge = rest.match(
-        /^(?:<-->|-->|---|-.->|==>|--o|--x)(?:\|[^|\n]*\|)?\s*/,
-      );
+      const edge = rest.match(EDGE_TEXT) ?? rest.match(EDGE_PLAIN);
       if (!edge)
         throw new Error(
-          `Group collapsing: unsupported syntax at line ${idx + 1}. Use one statement per line and A -->|label| B links.`,
+          `Group collapsing: unsupported syntax at line ${idx + 1}. Use one statement per line.`,
         );
       edges.push(edge[0].trim());
       rest = rest.slice(edge[0].length);
-      [n, rest] = nodeAt(rest);
-      nodes.push(n);
+      [n, rest] = endpointsAt(rest);
+      groupsList.push(n);
     }
+    const nodes = groupsList.flat();
     for (const id of stack)
       for (const node of nodes) {
         // Only declarations establish membership; bare endpoints may reference outer nodes.
         if (node.raw !== node.id || nodes.length === 1)
           groups.get(id)!.members.add(node.id);
       }
-    statements.push({ kind: "nodes", nodes, edges, owner });
+    statements.push({
+      kind: "nodes",
+      groups: groupsList,
+      edges,
+      raw: line,
+      owner,
+    });
   }
   if (stack.length) throw new Error("Unclosed group");
   // Mermaid assigns previously unseen bare nodes to their declaring subgraph.
   const declared = new Set<string>();
   for (const st of statements)
     if (st.kind === "nodes")
-      for (const n of st.nodes) {
+      for (const n of st.groups.flat()) {
         if (!declared.has(n.id) && st.owner) {
           let g: Group | undefined = groups.get(st.owner);
           while (g) {
@@ -187,23 +234,41 @@ export function collapseFlowchart(source: string, collapsed: string[]): string {
     if (st.kind === "end") {
       if (!hidden(st.id)) out.push("end");
     }
+    if (st.kind === "class") {
+      const ids = st.ids.filter((id) => target(id) === id);
+      if (!hidden(st.owner) && ids.length)
+        out.push(`class ${ids.join(",")} ${st.cls}`);
+    }
+    if (st.kind === "style") {
+      if (!hidden(st.owner) && target(st.id) === st.id) out.push(st.raw);
+    }
     if (st.kind === "nodes") {
+      const all = st.groups.flat();
+      const unchanged = all.every((n) => target(n.id) === n.id);
       if (!st.edges.length) {
-        if (!hidden(st.owner)) out.push(st.nodes[0].raw);
+        // Declarations of collapsed members may live outside the subgraph block.
+        if (!hidden(st.owner) && unchanged) out.push(st.raw);
         continue;
       }
-      for (let i = 0; i < st.edges.length; i++) {
-        const a = st.nodes[i],
-          b = st.nodes[i + 1],
-          ta = target(a.id),
-          tb = target(b.id);
-        if (ta === tb && (ta !== a.id || tb !== b.id)) continue;
-        const edge = `${ta === a.id ? a.raw : ta} ${st.edges[i]} ${tb === b.id ? b.raw : tb}`;
-        // Crossing edges must live outside a removed subgraph.
-        if (hidden(st.owner)) {
-          if (ta !== tb) out.push(edge);
-        } else out.push(edge);
+      if (!hidden(st.owner) && unchanged) {
+        out.push(st.raw);
+        continue;
       }
+      const seen = new Set<string>();
+      for (let i = 0; i < st.edges.length; i++)
+        for (const a of st.groups[i])
+          for (const b of st.groups[i + 1]) {
+            const ta = target(a.id),
+              tb = target(b.id);
+            if (ta === tb && (ta !== a.id || tb !== b.id)) continue;
+            const edge = `${ta === a.id ? a.raw : ta} ${st.edges[i]} ${tb === b.id ? b.raw : tb}`;
+            // Crossing edges must live outside a removed subgraph.
+            if (hidden(st.owner) && ta === tb) continue;
+            if (!seen.has(edge)) {
+              seen.add(edge);
+              out.push(edge);
+            }
+          }
     }
   }
   return out.join("\n");

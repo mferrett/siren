@@ -152,7 +152,7 @@ Controls above the preview collapse or expand individual groups or all groups at
 
 [src/lib/groups.ts](src/lib/groups.ts) implements a bounded structural parser tracking nested group stacks, node declarations, edges, and ownership. Edges crossing into a collapsed group are redirected to the outermost collapsed ancestor, while internal edges are hidden in the view projection without mutating the source code.
 
-Supported v1 subset: `flowchart`/`graph` with explicit direction, one statement per line, ASCII alphanumeric IDs with underscores/hyphens, `subgraph ID["Title"]`, delimited node shapes, `:::class` and `classDef`, edges (`-->`, `---`, `<-->`, `-.->`, `==>`, `--o`, `--x`), edge labels (`-->|text|`), and chains. Advanced constructs (`&`, semicolons, `@{...}` shapes, multiline node labels, standalone `style`/`class`/`linkStyle`/`click`) fail closed with a clear message **only when collapsing a group**; standard rendering supports all Mermaid syntax when groups are expanded.
+Supported v1 subset: `flowchart`/`graph` with explicit direction, one statement per line, ASCII alphanumeric IDs with underscores/hyphens, `subgraph ID["Title"]`, delimited node shapes, `@{ shape: ... }`, `:::class`, `classDef`, standalone `class` and `style`, nodes declared outside the subgraph and only referenced inside it, edges (`-->`, `---`, `<-->`, `-.->`, `<-.->`, `==>`, `--o`, `--x`, `~~~`), edge IDs (`e1@-->`), edge labels (`-->|text|`, `-- text -->`, `-. text .->`), `&` endpoint lists, and chains. Remaining constructs (semicolons, multiline node labels, standalone `linkStyle`/`click`) fail closed with a clear message **only when collapsing a group**; standard rendering supports all Mermaid syntax when groups are expanded.
 
 ## Security
 
