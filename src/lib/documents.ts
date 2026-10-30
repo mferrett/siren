@@ -20,6 +20,34 @@ export interface Archive {
   debounce: number;
   autosave: boolean;
 }
+/** Lightweight view of a document for lists (sidebar, tabs). */
+export interface DocItem {
+  id: string;
+  name: string;
+  dirty: boolean;
+}
+// Unchanged documents keep their identity, so only edited ones are re-compared.
+const dirtyCache = new WeakMap<Diagram, boolean>();
+export function isDirty(d: Diagram): boolean {
+  let dirty = dirtyCache.get(d);
+  if (dirty === undefined) {
+    dirty = d.code !== d.savedCode;
+    dirtyCache.set(d, dirty);
+  }
+  return dirty;
+}
+export function docItem(d: Diagram): DocItem {
+  return { id: d.id, name: d.name, dirty: isDirty(d) };
+}
+export function sameDocItems(a: DocItem[], b: DocItem[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (x, i) =>
+        x.id === b[i].id && x.name === b[i].name && x.dirty === b[i].dirty,
+    )
+  );
+}
 export const examples: Record<string, string> = {
   "Flowchart · groups": `flowchart TB
     %% @collapse id=PAS label="PAS System"

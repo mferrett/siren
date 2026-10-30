@@ -8,6 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex,
     },
+    time::{Duration, Instant},
 };
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 
@@ -24,10 +25,12 @@ struct WindowState {
 struct State {
     pending: Mutex<Vec<String>>,
     allowed: Mutex<HashSet<PathBuf>>,
-    storage: Mutex<()>,
+    /// Serializes archive I/O and remembers when the backup was last refreshed.
+    storage: Mutex<Option<Instant>>,
     exit_approved: AtomicBool,
 }
 const LIMIT: u64 = 8 * 1024 * 1024;
+const BACKUP_INTERVAL: Duration = Duration::from_secs(60);
 fn supported(p: &Path) -> bool {
     matches!(
         p.extension()
@@ -303,17 +306,15 @@ fn load_archive(app: tauri::AppHandle) -> Result<Option<String>, String> {
     }
     Ok(Some(data.to_string()))
 }
-#[tauri::command]
+// async: keeps fsync off the main thread that drives window events.
+#[tauri::command(async)]
 fn save_archive(app: tauri::AppHandle, data: String) -> Result<(), String> {
     let state = app.state::<State>();
-    let _lock = state.storage.lock().unwrap();
-    let parsed = serde_json::from_str::<serde_json::Value>(&data).map_err(|e| e.to_string())?;
-    if let Some(theme) = parsed["theme"].as_str() {
-        apply_window_theme(&app, theme);
-    }
+    let mut last_backup = state.storage.lock().unwrap();
     let p = archive_path(&app)?;
-    if p.exists() {
+    if p.exists() && last_backup.map_or(true, |t| t.elapsed() >= BACKUP_INTERVAL) {
         fs::copy(&p, p.with_extension("backup.json")).map_err(|e| e.to_string())?;
+        *last_backup = Some(Instant::now());
     }
     atomic_write(&p, data.as_bytes())
 }

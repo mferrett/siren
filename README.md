@@ -97,7 +97,7 @@ Data location (Tauri `app_data_dir`):
 - Windows: `%APPDATA%\it.mermaidfree.editor\archive.json`
 - Linux: `$XDG_DATA_HOME/it.mermaidfree.editor/archive.json` (typically `~/.local/share/...`)
 
-`archive.backup.json` stores the previous version, and `window-state.json` stores the window position and size. Each document includes `id`, `name`, `code` (draft), `savedCode`, `collapsed`, `modified`, `opened`, and—for files on disk—`path` and `externalText`. User preferences, open tabs (`openTabs`), editor split width (`splitRatio`), and active document are stored in the same archive. Data is not encrypted.
+`archive.backup.json` stores a copy of the previous archive, refreshed at most once per minute, and `window-state.json` stores the window position and size. Each document includes `id`, `name`, `code` (draft), `savedCode`, `collapsed`, `modified`, `opened`, and—for files on disk—`path` and `externalText`. User preferences, open tabs (`openTabs`), editor split width (`splitRatio`), and active document are stored in the same archive. Data is not encrypted.
 
 Drafts are also journaled in the WebView `localStorage` before the Rust write (debounced by 200 ms). On restart, any pending draft is recovered and notified via a toast. Autosave consolidates local workspace documents after 1.2 seconds; files on disk are only written on explicit **Save**. Quitting with unsaved changes prompts to save all, keep drafts, or cancel.
 

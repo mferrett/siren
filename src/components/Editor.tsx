@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import * as monaco from "monaco-editor/editor/editor.api.js";
 import "monaco-editor/editor/contrib/find/browser/findController.js";
 import "monaco-editor/editor/contrib/folding/browser/folding.js";
@@ -17,21 +17,21 @@ monaco.languages.setMonarchTokensProvider("mermaid", {
         /\b(flowchart|graph|subgraph|end|sequenceDiagram|classDiagram|stateDiagram-v2|erDiagram|gantt|pie|mindmap|participant|actor|classDef|style|direction|title|config)\b/,
         "keyword",
       ],
-      [/-->|---|==>|-.->|->>|-->>/, "operator"],
+      [/-->|---|==>|-\.->|->>|-->>/, "operator"],
       [/[\[\]{}()]/, "delimiter.bracket"],
       [/\b\d+\b/, "number"],
     ],
   },
 });
 const models = new Map<string, monaco.editor.ITextModel>();
-export function retainEditorModels(ids: string[]) {
+export function retainEditorModels(ids: ReadonlySet<string>) {
   for (const [id, model] of models)
-    if (!ids.includes(id)) {
+    if (!ids.has(id)) {
       model.dispose();
       models.delete(id);
     }
 }
-export function Editor({
+export const Editor = memo(function Editor({
   id,
   value,
   dark,
@@ -48,6 +48,8 @@ export function Editor({
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const change = useRef(onChange);
   change.current = onChange;
+  // Last text emitted by Monaco: echoing it back as `value` needs no model update.
+  const emitted = useRef<string | null>(null);
   useEffect(() => {
     const e = monaco.editor.create(host.current!, {
       editContext: false,
@@ -65,7 +67,11 @@ export function Editor({
       wordWrap: "on",
     });
     editor.current = e;
-    const sub = e.onDidChangeModelContent(() => change.current(e.getValue()));
+    const sub = e.onDidChangeModelContent(() => {
+      const text = e.getValue();
+      emitted.current = text;
+      change.current(text);
+    });
     return () => {
       sub.dispose();
       e.dispose();
@@ -75,6 +81,7 @@ export function Editor({
   useEffect(() => {
     const e = editor.current;
     if (!e) return;
+    emitted.current = null;
     let model = models.get(id);
     if (!model) {
       model = monaco.editor.createModel(value, "mermaid");
@@ -96,6 +103,7 @@ export function Editor({
     );
   }, [id]);
   useEffect(() => {
+    if (value === emitted.current) return;
     const model = editor.current?.getModel();
     if (model && model.getValue() !== value) {
       model.setValue(value);
@@ -129,4 +137,4 @@ export function Editor({
     );
   }, [error, id]);
   return <div className="monaco-host" ref={host} />;
-}
+});

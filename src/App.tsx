@@ -1,16 +1,23 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Editor, retainEditorModels } from "./components/Editor";
 import { Preview } from "./components/Preview";
+import { Sidebar, type ContextMenuState } from "./components/Sidebar";
+import { TabBar } from "./components/TabBar";
+import { GroupControls } from "./components/GroupControls";
+import { SettingsModal } from "./components/SettingsModal";
+import { ExportModal } from "./components/ExportModal";
 import {
   Archive,
   Diagram,
   createDiagram,
+  docItem,
   examples,
   importedDiagrams,
   initialArchive,
+  isDirty,
   parseArchive,
 } from "./lib/documents";
 import {
@@ -23,12 +30,8 @@ import {
 } from "./lib/native";
 import { collapseFlowchart, groupMetadata } from "./lib/groups";
 import { renderDiagram } from "./lib/render";
-import {
-  copyDiagram,
-  defaultExport,
-  exportDiagram,
-  ExportOptions,
-} from "./lib/export";
+import { useEvent } from "./lib/hooks";
+import { copyDiagram, defaultExport, exportDiagram } from "./lib/export";
 type Dialog = {
   title: string;
   message?: string;
@@ -37,12 +40,13 @@ type Dialog = {
   resolve: (v: string | null) => void;
 };
 type Rendered = { svg: string; key: string };
-type ContextMenuState = {
-  kind: "recent" | "tab";
-  id: string;
-  x: number;
-  y: number;
-};
+const splitColumns = (ratio: number) =>
+  `round(${ratio}%, 1px) 6px minmax(0,1fr)`;
+function countLines(text: string) {
+  let n = 1;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) n++;
+  return n;
+}
 export default function App() {
   const [archive, commitArchive] = useState<Archive>(initialArchive);
   const state = useRef(archive);
@@ -61,7 +65,6 @@ export default function App() {
     [mode, setMode] = useState<"split" | "editor" | "preview">("split"),
     [fullscreen, setFullscreen] = useState(false),
     [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null),
-    [dragTabId, setDragTabId] = useState<string | null>(null),
     [dragging, setDragging] = useState(false);
   const [dialog, setDialog] = useState<Dialog | null>(null),
     [input, setInput] = useState(""),
@@ -78,7 +81,9 @@ export default function App() {
     layout = useRef<HTMLDivElement>(null),
     openQueue = useRef(Promise.resolve()),
     dialogQueue = useRef(Promise.resolve()),
-    renderGeneration = useRef(0);
+    renderGeneration = useRef(0),
+    dragRatio = useRef<number | null>(null),
+    ratioFrame = useRef(0);
   const ratio = archive.splitRatio ?? 48;
   function setRatio(value: number | ((r: number) => number)) {
     setArchive((a) => {
@@ -117,16 +122,19 @@ export default function App() {
       };
     });
   }
-  function reorderTabs(fromId: string, toId: string) {
-    if (fromId === toId) return;
+  function moveTab(fromId: string, toId: string, after: boolean) {
     setArchive((a) => {
-      const tabs = [...getOpenIds(a)];
-      const fromIdx = tabs.indexOf(fromId);
-      const toIdx = tabs.indexOf(toId);
-      if (fromIdx === -1 || toIdx === -1) return a;
-      tabs.splice(fromIdx, 1);
-      tabs.splice(toIdx, 0, fromId);
-      return { ...a, openTabs: tabs };
+      const tabs = getOpenIds(a);
+      const from = tabs.indexOf(fromId);
+      let to = tabs.indexOf(toId);
+      if (from === -1 || to === -1) return a;
+      if (after) to++;
+      if (from < to) to--;
+      if (from === to) return a;
+      const next = [...tabs];
+      next.splice(from, 1);
+      next.splice(to, 0, fromId);
+      return { ...a, openTabs: next };
     });
   }
   const openIds = getOpenIds(archive);
@@ -135,9 +143,11 @@ export default function App() {
     .filter((d): d is Diagram => !!d);
   const doc = openDocs.find((d) => d.id === archive.active);
   const snapshot = doc ? renders[doc.id] : undefined;
-  const renderKey = doc
-    ? JSON.stringify([doc.code, doc.collapsed, archive.mermaidTheme])
-    : "";
+  const renderKey = useMemo(
+    () =>
+      doc ? JSON.stringify([doc.code, doc.collapsed, archive.mermaidTheme]) : "",
+    [doc?.code, doc?.collapsed, archive.mermaidTheme],
+  );
   const stale = !!snapshot && snapshot.key !== renderKey;
   function ask(
     title: string,
@@ -349,14 +359,14 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!ready) return;
-    const data = JSON.stringify(archive);
-    try {
-      localStorage.setItem("mermaid-recovery", data);
-    } catch (e) {
-      setNotice(`Local recovery unavailable: ${e}`);
-    }
     const timer = setTimeout(() => {
-      persist(archive)
+      const data = JSON.stringify(state.current);
+      try {
+        localStorage.setItem("mermaid-recovery", data);
+      } catch (e) {
+        setNotice(`Local recovery unavailable: ${e}`);
+      }
+      persist(data)
         .then(() => {
           if (localStorage.getItem("mermaid-recovery") === data)
             localStorage.removeItem("mermaid-recovery");
@@ -369,12 +379,11 @@ export default function App() {
     if (!ready || !archive.autosave) return;
     const timer = setTimeout(() => {
       setArchive((a) => {
-        if (!a.documents.some((d) => !d.path && d.code !== d.savedCode))
-          return a;
+        if (!a.documents.some((d) => !d.path && isDirty(d))) return a;
         return {
           ...a,
           documents: a.documents.map((d) =>
-            d.path ? d : { ...d, savedCode: d.code },
+            d.path || !isDirty(d) ? d : { ...d, savedCode: d.code },
           ),
         };
       });
@@ -382,14 +391,16 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [archive.documents, archive.autosave, ready]);
   useEffect(() => {
+    setError("");
+  }, [doc?.id]);
+  useEffect(() => {
     const generation = ++renderGeneration.current;
     if (!doc) {
-      setError("");
+      setRendering(false);
       return;
     }
-    setRendering(true);
-    setError("");
     const timer = setTimeout(async () => {
+      setRendering(true);
       try {
         const code = collapseFlowchart(doc.code, doc.collapsed);
         const svg = await renderDiagram(code, archive.mermaidTheme);
@@ -543,66 +554,68 @@ export default function App() {
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
-  useEffect(() => {
-    function key(e: KeyboardEvent) {
-      if (e.key === "Escape" && contextMenu) {
-        e.preventDefault();
-        setContextMenu(null);
-        return;
-      }
-      if (e.key === "Escape" && templateModal) {
-        e.preventDefault();
-        setTemplateModal(false);
-        return;
-      }
-      if (e.key === "Escape" && fullscreen) {
-        e.preventDefault();
-        toggleFullscreen(false);
-        return;
-      }
-      if (
-        dialog ||
-        templateModal ||
-        settings ||
-        exporting ||
-        !(e.metaKey || e.ctrlKey)
-      )
-        return;
-      if (e.key === ",") {
-        e.preventDefault();
-        e.stopPropagation();
-        setSettings(true);
-      }
-      if (e.key.toLowerCase() === "e") {
-        e.preventDefault();
-        e.stopPropagation();
-        if (snapshot && !busy) setExporting(true);
-      }
-      if (e.key.toLowerCase() === "w") {
-        e.preventDefault();
-        e.stopPropagation();
-        if (doc) closeTab(doc.id);
-      }
-      if (e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        e.stopPropagation();
-        if (doc) void saveDocument(doc, e.shiftKey);
-      }
-      if (e.key.toLowerCase() === "o") {
-        e.preventDefault();
-        e.stopPropagation();
-        void openFiles();
-      }
-      if (e.key.toLowerCase() === "n") {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.shiftKey) openNewFromTemplate();
-        else void newDocument();
-      }
+  const keyAction = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyAction.current = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && contextMenu) {
+      e.preventDefault();
+      setContextMenu(null);
+      return;
     }
+    if (e.key === "Escape" && templateModal) {
+      e.preventDefault();
+      setTemplateModal(false);
+      return;
+    }
+    if (e.key === "Escape" && fullscreen) {
+      e.preventDefault();
+      toggleFullscreen(false);
+      return;
+    }
+    if (
+      dialog ||
+      templateModal ||
+      settings ||
+      exporting ||
+      !(e.metaKey || e.ctrlKey)
+    )
+      return;
+    if (e.key === ",") {
+      e.preventDefault();
+      e.stopPropagation();
+      setSettings(true);
+    }
+    if (e.key.toLowerCase() === "e") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (snapshot && !busy) setExporting(true);
+    }
+    if (e.key.toLowerCase() === "w") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (doc) closeTab(doc.id);
+    }
+    if (e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (doc) void saveDocument(doc, e.shiftKey);
+    }
+    if (e.key.toLowerCase() === "o") {
+      e.preventDefault();
+      e.stopPropagation();
+      void openFiles();
+    }
+    if (e.key.toLowerCase() === "n") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.shiftKey) openNewFromTemplate();
+      else void newDocument();
+    }
+  };
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => keyAction.current(e);
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
-  });
+  }, []);
   useEffect(() => {
     if (!desktop) return;
     const focus = async () => {
@@ -661,11 +674,42 @@ export default function App() {
       setBusy(false);
     }
   }
+  const docIdsKey = archive.documents.map((d) => d.id).join("\n");
   useEffect(() => {
-    retainEditorModels(archive.documents.map((d) => d.id));
-  }, [archive.documents]);
-  const dirty = doc && doc.code !== doc.savedCode;
-  const groups = doc ? groupMetadata(doc.code) : [];
+    retainEditorModels(new Set(state.current.documents.map((d) => d.id)));
+  }, [docIdsKey]);
+  const openIdsKey = openIds.join("\n");
+  useEffect(() => {
+    const keep = new Set(getOpenIds(state.current));
+    setRenders((r) =>
+      Object.keys(r).every((id) => keep.has(id))
+        ? r
+        : Object.fromEntries(Object.entries(r).filter(([id]) => keep.has(id))),
+    );
+  }, [openIdsKey]);
+  const dirty = doc && isDirty(doc);
+  const groups = useMemo(
+    () => (doc ? groupMetadata(doc.code) : []),
+    [doc?.code],
+  );
+  const lineCount = useMemo(() => (doc ? countLines(doc.code) : 0), [doc?.code]);
+  const docItems = archive.documents.map(docItem);
+  const tabItems = openDocs.map(docItem);
+  const onOpenDoc = useEvent(openDoc);
+  const onCloseTab = useEvent(closeTab);
+  const onMoveTab = useEvent(moveTab);
+  const onActivateTab = useEvent((id: string) =>
+    setArchive((a) => ({ ...a, active: id })),
+  );
+  const onRenameTab = useEvent((id: string) => {
+    const d = state.current.documents.find((x) => x.id === id);
+    if (d) void renameDocument(d);
+  });
+  const onCollapsedChange = useEvent((collapsed: string[]) => {
+    if (doc) updateDoc(doc.id, { collapsed });
+  });
+  const onToggleFullscreen = useEvent(() => toggleFullscreen());
+  const onCodeChange = useEvent(changeCode);
   const revealLabel =
     typeof navigator !== "undefined" &&
     navigator.platform.toLowerCase().includes("mac")
@@ -675,52 +719,14 @@ export default function App() {
     <div className={`app ${archive.theme}`}>
       <div className="workspace">
         {sidebar && (
-          <aside className="sidebar">
-            <div className="sidebar-title">
-              WORKSPACE <span>{archive.documents.length}</span>
-            </div>
-            <input
-              aria-label="Search diagrams"
-              className="search"
-              placeholder="Search diagrams…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <div className="library-label">RECENT</div>
-            <div className="document-list">
-              {archive.documents
-                .filter((d) =>
-                  d.name.toLowerCase().includes(search.toLowerCase()),
-                )
-                .map((d) => (
-                  <div
-                    key={d.id}
-                    className={`document-card ${d.id === archive.active ? "selected" : ""}`}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setContextMenu({
-                        kind: "recent",
-                        id: d.id,
-                        x: Math.min(e.clientX, window.innerWidth - 200),
-                        y: Math.min(e.clientY, window.innerHeight - 160),
-                      });
-                    }}
-                  >
-                    <button
-                      className="document-open"
-                      title={d.name}
-                      onClick={() => openDoc(d.id)}
-                    >
-                      <strong>
-                        {d.name}
-                        {d.code !== d.savedCode ? " •" : ""}
-                      </strong>
-                    </button>
-                  </div>
-                ))}
-            </div>
-          </aside>
+          <Sidebar
+            items={docItems}
+            active={archive.active}
+            search={search}
+            onSearch={setSearch}
+            onOpen={onOpenDoc}
+            onContextMenu={setContextMenu}
+          />
         )}
         {contextMenu &&
           (() => {
@@ -868,82 +874,15 @@ export default function App() {
             </div>
           </div>
           {openDocs.length > 0 && (
-            <div
-              className="document-tabs"
-              role="tablist"
-              aria-label="Open diagrams"
-            >
-              {openDocs.map((d) => (
-                <div
-                  key={d.id}
-                  draggable
-                  className={`tab-item ${d.id === archive.active ? "active" : ""} ${dragTabId === d.id ? "dragging" : ""}`}
-                  onDragStart={(e) => {
-                    setDragTabId(d.id);
-                    e.dataTransfer.effectAllowed = "move";
-                    e.dataTransfer.setData("text/plain", d.id);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                    if (dragTabId && dragTabId !== d.id) {
-                      reorderTabs(dragTabId, d.id);
-                    }
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const from =
-                      dragTabId || e.dataTransfer.getData("text/plain");
-                    if (from && from !== d.id) reorderTabs(from, d.id);
-                    setDragTabId(null);
-                  }}
-                  onDragEnd={() => setDragTabId(null)}
-                  onMouseDown={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      closeTab(d.id);
-                    }
-                  }}
-                  onDoubleClick={() => void renameDocument(d)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setContextMenu({
-                      kind: "tab",
-                      id: d.id,
-                      x: Math.min(e.clientX, window.innerWidth - 160),
-                      y: Math.min(e.clientY, window.innerHeight - 100),
-                    });
-                  }}
-                >
-                  <button
-                    role="tab"
-                    className="tab-open"
-                    aria-selected={d.id === archive.active}
-                    title={d.name}
-                    onClick={() =>
-                      setArchive((a) => ({ ...a, active: d.id }))
-                    }
-                  >
-                    <span className="tab-label">{d.name}</span>
-                    {d.code !== d.savedCode && (
-                      <span className="tab-dirty">•</span>
-                    )}
-                  </button>
-                  <button
-                    className="tab-close"
-                    title="Close Tab (⌘W)"
-                    aria-label={`Close ${d.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTab(d.id);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
+            <TabBar
+              items={tabItems}
+              active={archive.active}
+              onActivate={onActivateTab}
+              onClose={onCloseTab}
+              onRename={onRenameTab}
+              onMove={onMoveTab}
+              onContextMenu={setContextMenu}
+            />
           )}
           {notice && (
             <div className="notice" role="status">
@@ -964,9 +903,7 @@ export default function App() {
                 ref={layout}
                 style={{
                   gridTemplateColumns:
-                    mode === "split"
-                      ? `round(${ratio}%, 1px) 6px minmax(0,1fr)`
-                      : "minmax(0,1fr)",
+                    mode === "split" ? splitColumns(ratio) : "minmax(0,1fr)",
                 }}
               >
                 {mode !== "preview" && (
@@ -976,11 +913,10 @@ export default function App() {
                       value={doc.code}
                       dark={archive.theme === "dark"}
                       error={error}
-                      onChange={changeCode}
+                      onChange={onCodeChange}
                     />
                     <div className="editor-footer">
-                      {doc.code.split("\n").length} lines{" "}
-                      <span>UTF-8 · Mermaid</span>
+                      {lineCount} lines <span>UTF-8 · Mermaid</span>
                     </div>
                   </section>
                 )}
@@ -1004,24 +940,38 @@ export default function App() {
                     }
                     onPointerMove={(e) => {
                       if (
-                        e.currentTarget.hasPointerCapture(e.pointerId) &&
-                        layout.current
-                      ) {
-                        const b = layout.current.getBoundingClientRect();
-                        setRatio(
-                          Math.max(
-                            20,
-                            Math.min(
-                              80,
-                              ((e.clientX - b.left) / b.width) * 100,
-                            ),
-                          ),
-                        );
-                      }
+                        !e.currentTarget.hasPointerCapture(e.pointerId) ||
+                        !layout.current
+                      )
+                        return;
+                      const b = layout.current.getBoundingClientRect();
+                      dragRatio.current = Math.max(
+                        20,
+                        Math.min(80, ((e.clientX - b.left) / b.width) * 100),
+                      );
+                      // Live resize touches only the grid; state is committed on release.
+                      ratioFrame.current ||= requestAnimationFrame(() => {
+                        ratioFrame.current = 0;
+                        if (layout.current && dragRatio.current !== null)
+                          layout.current.style.gridTemplateColumns =
+                            splitColumns(dragRatio.current);
+                      });
                     }}
                     onPointerUp={(e) =>
                       e.currentTarget.releasePointerCapture(e.pointerId)
                     }
+                    onLostPointerCapture={() => {
+                      cancelAnimationFrame(ratioFrame.current);
+                      ratioFrame.current = 0;
+                      if (dragRatio.current !== null) {
+                        const committed = dragRatio.current;
+                        dragRatio.current = null;
+                        if (layout.current)
+                          layout.current.style.gridTemplateColumns =
+                            splitColumns(committed);
+                        setRatio(committed);
+                      }
+                    }}
                   />
                 )}
                 {(mode !== "editor" || fullscreen) && (
@@ -1056,47 +1006,17 @@ export default function App() {
                       </div>
                     </div>
                     {groups.length > 0 && (
-                      <div className="group-controls">
-                        <span>Groups</span>
-                        {groups.map((g) => (
-                          <button
-                            key={g.id}
-                            className={
-                              doc.collapsed.includes(g.id) ? "collapsed" : ""
-                            }
-                            onClick={() =>
-                              updateDoc(doc.id, {
-                                collapsed: doc.collapsed.includes(g.id)
-                                  ? doc.collapsed.filter((id) => id !== g.id)
-                                  : [...doc.collapsed, g.id],
-                              })
-                            }
-                          >
-                            {doc.collapsed.includes(g.id) ? "＋" : "−"}{" "}
-                            {g.label}
-                          </button>
-                        ))}
-                        <button
-                          onClick={() =>
-                            updateDoc(doc.id, {
-                              collapsed: groups.map((g) => g.id),
-                            })
-                          }
-                        >
-                          Collapse All
-                        </button>
-                        <button
-                          onClick={() => updateDoc(doc.id, { collapsed: [] })}
-                        >
-                          Expand All
-                        </button>
-                      </div>
+                      <GroupControls
+                        groups={groups}
+                        collapsed={doc.collapsed}
+                        onChange={onCollapsedChange}
+                      />
                     )}
                     <Preview
                       docId={doc.id}
                       svg={snapshot?.svg ?? ""}
                       fullscreen={fullscreen}
-                      onToggleFullscreen={() => toggleFullscreen()}
+                      onToggleFullscreen={onToggleFullscreen}
                     />
                     {stale && (
                       <div className="stale">
@@ -1258,195 +1178,23 @@ export default function App() {
         </div>
       )}
       {settings && (
-        <div className="modal-backdrop">
-          <section
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Settings"
-          >
-            <h2>Settings</h2>
-            <label>
-              Appearance
-              <select
-                aria-label="Appearance"
-                value={archive.theme}
-                onChange={(e) =>
-                  setArchive((a) => ({
-                    ...a,
-                    theme: e.target.value as "light" | "dark",
-                  }))
-                }
-              >
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-              </select>
-            </label>
-            <label>
-              Default Mermaid Theme
-              <select
-                aria-label="Default Mermaid Theme"
-                value={archive.mermaidTheme}
-                onChange={(e) =>
-                  setArchive((a) => ({ ...a, mermaidTheme: e.target.value }))
-                }
-              >
-                {["default", "neutral", "dark", "forest", "base"].map((t) => (
-                  <option key={t}>{t}</option>
-                ))}
-              </select>
-            </label>
-            <p>
-              Diagram frontmatter and directives take precedence. The app
-              appearance is independent of the diagram theme.
-            </p>
-            <label>
-              Preview Debounce (ms)
-              <input
-                type="number"
-                min="100"
-                max="3000"
-                step="50"
-                value={archive.debounce}
-                onChange={(e) =>
-                  setArchive((a) => ({
-                    ...a,
-                    debounce: Math.max(
-                      100,
-                      Math.min(3000, Number(e.target.value)),
-                    ),
-                  }))
-                }
-              />
-            </label>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={archive.autosave}
-                onChange={(e) =>
-                  setArchive((a) => ({ ...a, autosave: e.target.checked }))
-                }
-              />
-              Automatically save workspace diagrams
-            </label>
-            <p>
-              Drafts are always preserved. Files on disk require an explicit
-              Save. Inter font is bundled; missing fonts fall back to local
-              sans-serif.
-            </p>
-            <button className="primary" onClick={() => setSettings(false)}>
-              Done
-            </button>
-          </section>
-        </div>
+        <SettingsModal
+          theme={archive.theme}
+          mermaidTheme={archive.mermaidTheme}
+          debounce={archive.debounce}
+          autosave={archive.autosave}
+          onChange={(patch) => setArchive((a) => ({ ...a, ...patch }))}
+          onClose={() => setSettings(false)}
+        />
       )}
       {exporting && (
-        <div className="modal-backdrop">
-          <section
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Export Diagram"
-          >
-            <h2>Export Diagram</h2>
-            <label>
-              PNG Scale
-              <select
-                value={options.scale}
-                onChange={(e) =>
-                  setOptions((o) => ({ ...o, scale: Number(e.target.value) }))
-                }
-              >
-                {[1, 2, 3, 4].map((s) => (
-                  <option key={s} value={s}>
-                    {s}×
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={options.transparent}
-                onChange={(e) =>
-                  setOptions((o) => ({ ...o, transparent: e.target.checked }))
-                }
-              />
-              Transparent background (PNG / PDF)
-            </label>
-            <label>
-              Background
-              <input
-                type="color"
-                value={options.background}
-                onChange={(e) =>
-                  setOptions((o) => ({ ...o, background: e.target.value }))
-                }
-              />
-            </label>
-            <label>
-              PDF Page Size
-              <select
-                value={options.page}
-                onChange={(e) =>
-                  setOptions((o) => ({
-                    ...o,
-                    page: e.target.value as ExportOptions["page"],
-                  }))
-                }
-              >
-                <option value="a4">A4</option>
-                <option value="letter">Letter</option>
-              </select>
-            </label>
-            <label>
-              Orientation
-              <select
-                value={options.orientation}
-                onChange={(e) =>
-                  setOptions((o) => ({
-                    ...o,
-                    orientation: e.target.value as ExportOptions["orientation"],
-                  }))
-                }
-              >
-                <option value="landscape">Landscape</option>
-                <option value="portrait">Portrait</option>
-              </select>
-            </label>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={options.fit}
-                onChange={(e) =>
-                  setOptions((o) => ({ ...o, fit: e.target.checked }))
-                }
-              />
-              Fit PDF to page
-            </label>
-            <p>
-              SVG preserves original labels and embeds Inter. PNG, clipboard,
-              and PDF convert HTML labels to SVG text: rich formatting may
-              differ. PDF uses standard fonts available in the PDF engine.
-            </p>
-            <div className="modal-actions">
-              {(["svg", "png", "pdf"] as const).map((f) => (
-                <button
-                  className="primary"
-                  disabled={busy}
-                  key={f}
-                  onClick={() => void output(f)}
-                >
-                  {f.toUpperCase()}
-                </button>
-              ))}
-              <button disabled={busy} onClick={() => setExporting(false)}>
-                Close
-              </button>
-            </div>
-            {busy && <p>Preparing export…</p>}
-          </section>
-        </div>
+        <ExportModal
+          options={options}
+          onOptions={setOptions}
+          busy={busy}
+          onExport={(f) => void output(f)}
+          onClose={() => setExporting(false)}
+        />
       )}
     </div>
   );

@@ -9,8 +9,8 @@ export async function loadArchive(): Promise<Archive | undefined> {
     : localStorage.getItem("mermaid-archive");
   return raw ? parseArchive(raw) : undefined;
 }
-export function persist(a: Archive): Promise<void> {
-  const data = JSON.stringify(a);
+export function persist(a: Archive | string): Promise<void> {
+  const data = typeof a === "string" ? a : JSON.stringify(a);
   writeQueue = writeQueue
     .catch(() => {})
     .then(async () => {

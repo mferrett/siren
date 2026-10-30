@@ -306,3 +306,48 @@ test("preserves preview zoom/pan on edit, persists split width, and supports ful
   await expect(page.locator(".tab-item")).toHaveCount(1);
   await expect(page.locator(".document-card")).toHaveCount(2);
 });
+
+test("splitter drag, cursor-anchored wheel zoom and tab reordering", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const svg = page.locator(".svg-position svg");
+  await expect(svg).toBeVisible();
+
+  const splitter = page.getByRole("separator", { name: "Resize panels" });
+  const panels = (await page.locator(".panels").boundingBox())!;
+  const s = (await splitter.boundingBox())!;
+  await page.mouse.move(s.x + s.width / 2, s.y + s.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(panels.x + panels.width * 0.3, s.y + s.height / 2, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  await expect(splitter).toHaveAttribute("aria-valuenow", /^(29|30|31)/);
+
+  const label = page.locator(".zoom-controls button").nth(1);
+  const labelBefore = (await label.textContent())!;
+  const before = (await svg.boundingBox())!;
+  const cx = before.x + before.width * 0.25,
+    cy = before.y + before.height * 0.25;
+  await page.mouse.move(cx, cy);
+  await page.mouse.wheel(0, -200);
+  await expect(label).not.toHaveText(labelBefore);
+  const after = (await svg.boundingBox())!;
+  expect(after.width).toBeGreaterThan(before.width);
+  expect(Math.abs((cx - after.x) / after.width - 0.25)).toBeLessThan(0.02);
+  expect(Math.abs((cy - after.y) / after.height - 0.25)).toBeLessThan(0.02);
+
+  await page.locator(".document-card").first().click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Duplicate" }).click();
+  const labels = page.locator(".tab-item .tab-label");
+  await expect(labels).toHaveCount(2);
+  const [first, second] = await labels.allTextContents();
+  await page
+    .locator(".tab-item")
+    .nth(1)
+    .dragTo(page.locator(".tab-item").nth(0), {
+      targetPosition: { x: 4, y: 4 },
+    });
+  await expect(labels).toHaveText([second, first]);
+});

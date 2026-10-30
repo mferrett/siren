@@ -1,5 +1,3 @@
-import { jsPDF } from "jspdf";
-import "svg2pdf.js";
 import { Image as TauriImage } from "@tauri-apps/api/image";
 import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import fontDataUrl from "@fontsource/inter/files/inter-latin-400-normal.woff2?inline";
@@ -203,6 +201,10 @@ export async function exportDiagram(
       (t as SVGElement).style.removeProperty("stroke-width");
       (t as SVGElement).style.fontFamily = "helvetica";
     }
+    const [{ jsPDF }] = await Promise.all([
+      import("jspdf"),
+      import("svg2pdf.js"),
+    ]);
     const pdf = new jsPDF({
       orientation: options.orientation,
       format: options.page,
