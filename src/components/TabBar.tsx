@@ -40,7 +40,8 @@ function TabBarView({
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
-            if (dragId && dragId !== d.id) onMove(dragId, d.id, pastMidpoint(e));
+            if (dragId && dragId !== d.id)
+              onMove(dragId, d.id, pastMidpoint(e));
           }}
           onDrop={(e) => {
             e.preventDefault();
@@ -63,7 +64,7 @@ function TabBarView({
               kind: "tab",
               id: d.id,
               x: Math.min(e.clientX, window.innerWidth - 160),
-              y: Math.min(e.clientY, window.innerHeight - 100),
+              y: Math.min(e.clientY, window.innerHeight - 210),
             });
           }}
         >

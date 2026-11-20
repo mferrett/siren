@@ -7,7 +7,7 @@ export interface ExportOptions {
   background: string;
   transparent: boolean;
   orientation: "landscape" | "portrait";
-  page: "a4" | "letter";
+  page: "a4" | "letter" | "content";
   fit: boolean;
 }
 export const defaultExport: ExportOptions = {
@@ -24,11 +24,7 @@ export function svgElement(svg: string): SVGSVGElement {
     doc.documentElement) as unknown as SVGSVGElement;
   el.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   el.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
-  const view = el
-    .getAttribute("viewBox")
-    ?.trim()
-    .split(/[ ,]+/)
-    .map(Number);
+  const view = el.getAttribute("viewBox")?.trim().split(/[ ,]+/).map(Number);
   el.setAttribute(
     "width",
     String(view?.[2] || parseFloat(el.getAttribute("width") || "800") || 800),
@@ -205,21 +201,45 @@ export async function exportDiagram(
       import("jspdf"),
       import("svg2pdf.js"),
     ]);
-    const pdf = new jsPDF({
-      orientation: options.orientation,
-      format: options.page,
-      unit: "pt",
-    });
     const w = Number(el.getAttribute("width")),
       h = Number(el.getAttribute("height"));
+    const margin = 20;
+    const maxPageSide = 14_400;
+    const contentRatio = Math.min(
+      1,
+      (maxPageSide - margin * 2) / Math.max(w, h),
+    );
+    const contentWidth = w * contentRatio;
+    const contentHeight = h * contentRatio;
+    const contentPage = options.page === "content";
+    const pdf = new jsPDF({
+      orientation: contentPage
+        ? contentWidth >= contentHeight
+          ? "landscape"
+          : "portrait"
+        : options.orientation,
+      format: contentPage
+        ? [contentWidth + margin * 2, contentHeight + margin * 2]
+        : options.page,
+      unit: "pt",
+    });
     const pw = pdf.internal.pageSize.getWidth(),
       ph = pdf.internal.pageSize.getHeight();
-    const ratio = options.fit ? Math.min((pw - 40) / w, (ph - 40) / h) : 1;
+    const ratio = contentPage
+      ? contentRatio
+      : options.fit
+        ? Math.min((pw - margin * 2) / w, (ph - margin * 2) / h)
+        : 1;
     if (!options.transparent) {
       pdf.setFillColor(options.background);
       pdf.rect(0, 0, pw, ph, "F");
     }
-    await pdf.svg(el, { x: 20, y: 20, width: w * ratio, height: h * ratio });
+    await pdf.svg(el, {
+      x: margin,
+      y: margin,
+      width: w * ratio,
+      height: h * ratio,
+    });
     bytes = new Uint8Array(pdf.output("arraybuffer"));
   }
   return saveBytes(

@@ -29,6 +29,7 @@ import {
   writeFile,
 } from "./lib/native";
 import { collapseFlowchart, groupMetadata } from "./lib/groups";
+import type { PreviewSource } from "./lib/previewNavigation";
 import { renderDiagram } from "./lib/render";
 import { useEvent } from "./lib/hooks";
 import { copyDiagram, defaultExport, exportDiagram } from "./lib/export";
@@ -39,7 +40,11 @@ type Dialog = {
   input?: string;
   resolve: (v: string | null) => void;
 };
-type Rendered = { svg: string; key: string };
+type Rendered = {
+  svg: string;
+  key: string;
+  source: PreviewSource;
+};
 const splitColumns = (ratio: number) =>
   `round(${ratio}%, 1px) 6px minmax(0,1fr)`;
 function countLines(text: string) {
@@ -55,6 +60,10 @@ export default function App() {
     state.current = next;
     commitArchive(next);
   }
+  const [navigation, setNavigation] = useState<{
+    docId: string;
+    line: number;
+  }>();
   const [ready, setReady] = useState(false),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
@@ -122,6 +131,12 @@ export default function App() {
       };
     });
   }
+  function closeAllTabs() {
+    setArchive((a) => ({ ...a, openTabs: [], active: "" }));
+  }
+  function closeOtherTabs(id: string) {
+    setArchive((a) => ({ ...a, openTabs: [id], active: id }));
+  }
   function moveTab(fromId: string, toId: string, after: boolean) {
     setArchive((a) => {
       const tabs = getOpenIds(a);
@@ -145,7 +160,9 @@ export default function App() {
   const snapshot = doc ? renders[doc.id] : undefined;
   const renderKey = useMemo(
     () =>
-      doc ? JSON.stringify([doc.code, doc.collapsed, archive.mermaidTheme]) : "",
+      doc
+        ? JSON.stringify([doc.code, doc.collapsed, archive.mermaidTheme])
+        : "",
     [doc?.code, doc?.collapsed, archive.mermaidTheme],
   );
   const stale = !!snapshot && snapshot.key !== renderKey;
@@ -176,8 +193,36 @@ export default function App() {
     }));
   }
   async function renameDocument(d: Diagram) {
-    const name = await ask("Rename", ["Rename"], undefined, d.name);
-    if (name) updateDoc(d.id, { name, modified: Date.now() });
+    const path = desktop ? d.path : undefined;
+    const name = (
+      await ask(
+        "Rename",
+        ["Rename"],
+        path ? "Rename the file in its current folder." : undefined,
+        path ? path.split(/[/\\]/).pop() : d.name,
+      )
+    )?.trim();
+    if (!name) return;
+    if (!path) {
+      updateDoc(d.id, { name, modified: Date.now() });
+      return;
+    }
+    try {
+      const renamed = await invoke<string>("rename_file", { path, name });
+      const patch = {
+        path: renamed,
+        name: renamed.split(/[/\\]/).pop()!,
+        modified: Date.now(),
+      };
+      setArchive((a) => ({
+        ...a,
+        documents: a.documents.map((item) =>
+          item.path === path ? { ...item, ...patch } : item,
+        ),
+      }));
+    } catch (e) {
+      setNotice(String(e));
+    }
   }
   function changeCode(code: string) {
     if (doc) updateDoc(doc.id, { code, modified: Date.now() });
@@ -402,10 +447,18 @@ export default function App() {
     const timer = setTimeout(async () => {
       setRendering(true);
       try {
-        const code = collapseFlowchart(doc.code, doc.collapsed);
+        const sourceLines: number[] = [];
+        const code = collapseFlowchart(doc.code, doc.collapsed, sourceLines);
         const svg = await renderDiagram(code, archive.mermaidTheme);
         if (generation === renderGeneration.current) {
-          setRenders((r) => ({ ...r, [doc.id]: { svg, key: renderKey } }));
+          setRenders((r) => ({
+            ...r,
+            [doc.id]: {
+              svg,
+              key: renderKey,
+              source: { code, originalLines: sourceLines },
+            },
+          }));
           setError("");
         }
       } catch (e) {
@@ -692,7 +745,10 @@ export default function App() {
     () => (doc ? groupMetadata(doc.code) : []),
     [doc?.code],
   );
-  const lineCount = useMemo(() => (doc ? countLines(doc.code) : 0), [doc?.code]);
+  const lineCount = useMemo(
+    () => (doc ? countLines(doc.code) : 0),
+    [doc?.code],
+  );
   const docItems = archive.documents.map(docItem);
   const tabItems = openDocs.map(docItem);
   const onOpenDoc = useEvent(openDoc);
@@ -769,6 +825,25 @@ export default function App() {
                     }}
                   >
                     Close Tab
+                  </button>
+                  <button
+                    role="menuitem"
+                    disabled={openIds.length < 2}
+                    onClick={() => {
+                      setContextMenu(null);
+                      closeOtherTabs(target.id);
+                    }}
+                  >
+                    Close Other Tabs
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setContextMenu(null);
+                      closeAllTabs();
+                    }}
+                  >
+                    Close All Tabs
                   </button>
                 </div>
               );
@@ -913,6 +988,7 @@ export default function App() {
                       value={doc.code}
                       dark={archive.theme === "dark"}
                       error={error}
+                      navigation={navigation}
                       onChange={onCodeChange}
                     />
                     <div className="editor-footer">
@@ -980,11 +1056,7 @@ export default function App() {
                   >
                     <div className="panel-heading">
                       <span className="preview-status">
-                        {rendering
-                          ? "Updating…"
-                          : stale
-                            ? "Out of date"
-                            : ""}
+                        {rendering ? "Updating…" : stale ? "Out of date" : ""}
                       </span>
                       <div className="panel-actions">
                         <button
@@ -1015,6 +1087,12 @@ export default function App() {
                     <Preview
                       docId={doc.id}
                       svg={snapshot?.svg ?? ""}
+                      source={stale ? undefined : snapshot?.source}
+                      onNavigate={(line) => {
+                        setNavigation({ docId: doc.id, line });
+                        if (mode === "preview") setMode("split");
+                        if (fullscreen) toggleFullscreen();
+                      }}
                       fullscreen={fullscreen}
                       onToggleFullscreen={onToggleFullscreen}
                     />

@@ -426,7 +426,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  pointer-events: none;
+  pointer-events: auto;
 }
 .svg-position > div {
   flex-shrink: 0;

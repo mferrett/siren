@@ -1,17 +1,17 @@
 <div align="center">
   <img src="icon.svg" alt="Siren Icon" width="128" height="128" style="border-radius: 32px; box-shadow: 0px 8px 12px rgba(0, 0, 0, 0.2);" />
 
-  # Siren
+# Siren
 
-  **Fast, offline-first desktop Mermaid diagram editor for macOS and Windows**
+**Fast, offline-first desktop Mermaid diagram editor for macOS and Windows**
 
-  [![Tauri 2](https://img.shields.io/badge/Tauri-2.10-24C8D8?logo=tauri&logoColor=white)](https://v2.tauri.app/)
-  [![Rust](https://img.shields.io/badge/Rust-2021-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-  [![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=1a1a1a)](https://react.dev/)
-  [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-  [![Monaco Editor](https://img.shields.io/badge/Monaco_Editor-0.57-007ACC?logo=visualstudiocode&logoColor=white)](https://microsoft.github.io/monaco-editor/)
-  [![Mermaid.js](https://img.shields.io/badge/Mermaid.js-12.2-FF3670?logo=mermaid&logoColor=white)](https://mermaid.js.org/)
-  [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-6366F1)](#getting-started)
+[![Tauri 2](https://img.shields.io/badge/Tauri-2.10-24C8D8?logo=tauri&logoColor=white)](https://v2.tauri.app/)
+[![Rust](https://img.shields.io/badge/Rust-2021-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=1a1a1a)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Monaco Editor](https://img.shields.io/badge/Monaco_Editor-0.57-007ACC?logo=visualstudiocode&logoColor=white)](https://microsoft.github.io/monaco-editor/)
+[![Mermaid.js](https://img.shields.io/badge/Mermaid.js-12.2-FF3670?logo=mermaid&logoColor=white)](https://mermaid.js.org/)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-6366F1)](#getting-started)
 </div>
 
 ---
@@ -21,12 +21,15 @@
 ## Screenshots
 
 ### Light Workspace & Collapsible Flowchart Groups
+
 ![Siren Light Workspace](docs/screenshots/workspace-light.png)
 
 ### Dark Appearance & Multi-Tab Editing
+
 ![Siren Dark Workspace](docs/screenshots/workspace-dark.png)
 
 ### Full Screen Presentation Mode
+
 ![Siren Full Screen Presentation](docs/screenshots/fullscreen-preview.png)
 
 ## Getting Started
@@ -80,12 +83,15 @@ Output is written to `src-tauri/target/release/bundle/` (or `debug/bundle/`). ma
   - **Settings (`⌘,` / `Ctrl+,`):** configure light/dark appearance, default Mermaid theme, preview debounce (100–3000 ms), and workspace autosave.
 - **Workspace & Tabs:**
   - The left sidebar lists recent diagrams in your workspace with search by name. Right-click any item to **Rename**, **Duplicate**, **Reveal in Finder / File Explorer**, or **Remove from Workspace** (which removes the item from Siren's workspace without deleting any file on disk).
-  - Open diagrams appear as draggable tabs above the editor. Drag tabs to reorder them, double-click or right-click a tab to **Rename**, or click `×` / **Close Tab** to close it.
+  - On desktop, **Rename** renames a linked Mermaid file in its current folder and preserves its extension when you omit it. For workspace diagrams and imported Markdown blocks, it updates the workspace name.
+  - Open diagrams appear as draggable tabs above the editor. Drag tabs to reorder them, double-click or right-click a tab to **Rename**, or use **Close Tab**, **Close Other Tabs**, and **Close All Tabs** from the tab menu.
   - The split ratio between editor and preview, as well as the window size and position, are automatically remembered across restarts.
 - **Preview & Full Screen Presentation:**
   - Use the mouse wheel or zoom buttons to zoom, drag to pan, click the percentage to reset to 100%, or click **Fit** to center.
+  - Click an object in a flowchart, sequence, class, state, ER, Gantt, mindmap, or pie diagram to jump to its source line. The pointer highlights objects that support navigation.
   - Switch between **Code**, **Split**, and **Preview** modes, or click **Full Screen ⛶** to present the diagram across the entire screen (`Esc` to exit).
   - **Invalid edits:** the last valid preview remains visible with a warning banner. Exporting or copying asks for confirmation when the displayed diagram does not match the current source code.
+  - PDF export supports A4, Letter, and **Fit to content**. The content-sized page follows the diagram proportions for screen viewing and sharing.
 
 ## Workspace Archive & Recovery
 
@@ -111,7 +117,7 @@ Before opening files when the current document has unsaved changes, Siren prompt
 
 File associations for `.mmd` and `.mermaid` are declared with the **Editor** role without forcing Siren as the default handler:
 
-- **macOS:** `RunEvent::Opened` collects file URLs sent from the Dock, Finder, and *Open With*, even before React is ready.
+- **macOS:** `RunEvent::Opened` collects file URLs sent from the Dock, Finder, and _Open With_, even before React is ready.
 - **Windows:** startup arguments and the single-instance plugin forward file paths to the running instance and bring the window to the front.
 - `.md` is not globally associated to avoid interfering with general Markdown editors; open `.md` files via **Open File…** or drag and drop.
 
@@ -122,7 +128,6 @@ When the window regains focus, Siren checks whether the active file on disk has 
 Precedence: Mermaid defaults → app settings (`initialize`) → diagram directives/frontmatter, following official Mermaid behavior. Security parameters remain locked. Changing the app appearance does not alter diagram source code or strip frontmatter.
 
 The preview uses official Mermaid inside a Shadow DOM container to isolate diagram SVG and styles from app styles. Inter Latin 400/500/600 is bundled locally and loaded before rendering. `fontFamily` can reference any installed system font; missing fonts fall back to local CSS sans-serif.
-
 
 Official references: [Mermaid Configuration](https://mermaid.js.org/config/configuration), [securityLevel](https://mermaid.js.org/config/schema-docs/config-properties-securitylevel.html), [Mermaid Live Editor](https://github.com/mermaid-js/mermaid-live-editor), [Tauri Documentation](https://v2.tauri.app/).
 

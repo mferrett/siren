@@ -2164,6 +2164,7 @@ name = "mermaid-free-editor"
 version = "0.1.0"
 dependencies = [
  "rfd",
+ "rustix",
  "serde",
  "serde_json",
  "tauri",
@@ -2171,6 +2172,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-single-instance",
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

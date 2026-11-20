@@ -144,6 +144,76 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     file.persist(path).map_err(|e| e.to_string())?;
     Ok(())
 }
+fn diagram_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mmd") || ext.eq_ignore_ascii_case("mermaid"))
+}
+
+#[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
+    use rustix::fs::{renameat_with, RenameFlags, CWD};
+    Ok(renameat_with(CWD, from, CWD, to, RenameFlags::NOREPLACE)?)
+}
+
+#[cfg(windows)]
+fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileW;
+    let wide = |p: &Path| {
+        p.as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>()
+    };
+    // Both buffers are NUL-terminated and live for the duration of the call.
+    if unsafe { MoveFileW(wide(from).as_ptr(), wide(to).as_ptr()) } == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+fn rename_diagram(
+    allowed: &mut HashSet<PathBuf>,
+    from: &Path,
+    name: &str,
+) -> Result<PathBuf, String> {
+    if !allowed.contains(from) || !diagram_extension(from) {
+        return Err("Unauthorized rename: reopen the diagram from the file picker.".into());
+    }
+    let name = name.trim();
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['/', '\\', ':', '\0'])
+        || Path::new(name).file_name() != Some(name.as_ref())
+    {
+        return Err("Enter a file name without a folder path.".into());
+    }
+    if !from.is_file() {
+        return Err("File unavailable: reopen it from the file picker.".into());
+    }
+    let mut to = from.with_file_name(name);
+    if !diagram_extension(&to) {
+        let extension = from.extension().unwrap().to_string_lossy();
+        to = from.with_file_name(format!("{name}.{extension}"));
+    }
+    if from != to {
+        rename_exclusive(from, &to).map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => "A file with that name already exists.".to_owned(),
+            _ => format!("Rename failed: {e}"),
+        })?;
+        allowed.remove(from);
+        allowed.insert(to.clone());
+    }
+    Ok(to)
+}
+
+#[tauri::command]
+fn rename_file(path: String, name: String, state: tauri::State<State>) -> Result<PathBuf, String> {
+    rename_diagram(&mut state.allowed.lock().unwrap(), Path::new(&path), &name)
+}
 #[tauri::command]
 fn write_file(
     path: String,
@@ -152,22 +222,14 @@ fn write_file(
     state: tauri::State<State>,
 ) -> Result<(), String> {
     let p = PathBuf::from(path);
-    if !state.allowed.lock().unwrap().contains(&p)
-        || !matches!(
-            p.extension()
-                .and_then(|x| x.to_str())
-                .map(str::to_lowercase)
-                .as_deref(),
-            Some("mmd" | "mermaid")
-        )
-    {
+    let allowed = state.allowed.lock().unwrap();
+    if !allowed.contains(&p) || !diagram_extension(&p) {
         return Err("Unauthorized save: use Save As.".into());
     }
     checked_write(&p, &text, &expected)
 }
 fn checked_write(p: &Path, text: &str, expected: &str) -> Result<(), String> {
-    let current =
-        fs::read_to_string(p).map_err(|_| "File removed or unreadable: use Save As.")?;
+    let current = fs::read_to_string(p).map_err(|_| "File removed or unreadable: use Save As.")?;
     if current != expected {
         return Err("CONFLICT: The file was modified externally. Reload it or use Save As to keep both versions.".into());
     }
@@ -478,6 +540,7 @@ pub fn run() {
             read_file,
             reveal_in_folder,
             write_file,
+            rename_file,
             save_as,
             load_archive,
             save_archive,
@@ -548,6 +611,38 @@ mod tests {
         fs::remove_file(&p).unwrap();
         assert!(checked_write(&p, "draft", "saved").is_err());
         assert!(!p.exists());
+    }
+    #[test]
+    fn rename_preserves_file_contents_extension_and_access() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("before.MERMAID");
+        fs::write(&from, "external change").unwrap();
+        let mut allowed = HashSet::from([from.clone()]);
+        let to = rename_diagram(&mut allowed, &from, "after.v2").unwrap();
+        assert_eq!(to, dir.path().join("after.v2.MERMAID"));
+        assert!(!from.exists());
+        assert_eq!(allowed, HashSet::from([to.clone()]));
+        assert_eq!(fs::read_to_string(&to).unwrap(), "external change");
+        assert!(checked_write(&to, "draft", "old").is_err());
+        let to = rename_diagram(&mut allowed, &to, "After.v2.MERMAID").unwrap();
+        checked_write(&to, "draft", "external change").unwrap();
+    }
+
+    #[test]
+    fn invalid_rename_leaves_both_files_and_grants_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("original.mmd");
+        let other = dir.path().join("existing.mmd");
+        fs::write(&from, "original").unwrap();
+        fs::write(&other, "other").unwrap();
+        let mut allowed = HashSet::from([from.clone()]);
+        for name in ["existing", "../moved", r"..\moved", ".", "..", ""] {
+            assert!(rename_diagram(&mut allowed, &from, name).is_err());
+        }
+        assert!(rename_diagram(&mut allowed, &other, "new").is_err());
+        assert_eq!(fs::read_to_string(&from).unwrap(), "original");
+        assert_eq!(fs::read_to_string(&other).unwrap(), "other");
+        assert_eq!(allowed, HashSet::from([from]));
     }
     #[test]
     fn extensions() {

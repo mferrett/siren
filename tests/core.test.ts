@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { collapseFlowchart, groupMetadata } from "../src/lib/groups";
+import { collapseFlowchart, flowchartLocations, groupMetadata } from "../src/lib/groups";
 import {
   examples,
   importedDiagrams,
@@ -39,7 +39,7 @@ describe("Archive recovery", () => {
   it("round-trips unsaved source, last saved source and independent view state", () => {
     const a = initialArchive();
     a.documents[0].code += "\n%% draft";
-    a.documents[0].collapsed = ["PAS"];
+    a.documents[0].collapsed = ["ACME"];
     expect(parseArchive(JSON.stringify(a))).toEqual(a);
     expect(a.documents[0].code).not.toBe(a.documents[0].savedCode);
   });
@@ -51,9 +51,9 @@ describe("Archive recovery", () => {
 describe("Flowchart structural collapse", () => {
   it("redirects crossing edges without mutating source", () => {
     const source = examples["Flowchart · groups"];
-    const result = collapseFlowchart(source, ["PAS"]);
-    expect(result).toContain('PAS["PAS System"]');
-    expect(result).toContain('Client["Client"] --> PAS');
+    const result = collapseFlowchart(source, ["ACME"]);
+    expect(result).toContain('ACME["ACME System"]');
+    expect(result).toContain('Client["Client"] --> ACME');
     expect(result).not.toContain("API -->");
     expect(collapseFlowchart(source, [])).toBe(source);
   });
@@ -107,7 +107,7 @@ describe("Flowchart structural collapse", () => {
   });
   it("rejects unsupported syntax instead of damaging source", () => {
     const source = examples["Flowchart · groups"] + "\nlinkStyle 0 stroke:red";
-    expect(() => collapseFlowchart(source, ["PAS"])).toThrow("linkStyle");
+    expect(() => collapseFlowchart(source, ["ACME"])).toThrow("linkStyle");
     expect(collapseFlowchart(source, [])).toBe(source);
   });
   it("extracts metadata without changing ordinary Mermaid comments", () => {
@@ -115,4 +115,31 @@ describe("Flowchart structural collapse", () => {
       { id: "A", label: "Alpha" },
     ]);
   });
+});
+
+
+describe("preview source locations", () => {
+  it("maps chained, parallel and explicitly named connections", () => {
+    const locations = flowchartLocations("flowchart LR\n A[Start] --> B & C\n A --> B\n B custom@--> C");
+    expect(locations.nodes).toEqual({ A: 2, B: 2, C: 2 });
+    expect(locations.edges).toEqual({ L_A_B_0: 2, L_A_C_0: 2, L_A_B_2: 3, custom: 4 });
+  });
+  it("keeps original lines when a group is collapsed", () => {
+    const source = 'flowchart LR\n%% @collapse id=G label="Group"\nsubgraph G\n A[Inside]\nend\n B[Outside]\n A --> B';
+    const lines: number[] = [];
+    const code = collapseFlowchart(source, ["G"], lines);
+    const locations = flowchartLocations(code, lines);
+    expect(locations.nodes.G).toBe(3);
+    expect(locations.nodes.B).toBe(6);
+    expect(locations.edges.L_G_B_0).toBe(7);
+  });
+});
+
+
+it("maps semicolons and multiline labels to their declaration", () => {
+  const source = 'flowchart LR; A --> B;\n B["Two\n lines"]; B --> C\nlinkStyle 0 stroke:red';
+  const locations = flowchartLocations(source);
+  expect(locations.nodes.B).toBe(2);
+  expect(locations.edges.L_A_B_0).toBe(1);
+  expect(locations.edges.L_B_C_0).toBe(3);
 });

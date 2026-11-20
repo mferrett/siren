@@ -11,21 +11,21 @@ test("archive, editing, syntax failure and group view survive restart", async ({
   await page.goto("/");
   await expect(page.locator(".svg-position svg")).toBeVisible();
   await page
-    .getByRole("button", { name: "− PAS System", exact: true })
+    .getByRole("button", { name: "− ACME System", exact: true })
     .click();
-  await expect(page.locator(".svg-position svg")).not.toContainText("PAS API");
+  await expect(page.locator(".svg-position svg")).not.toContainText("ACME API");
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "＋ PAS System", exact: true }),
+    page.getByRole("button", { name: "＋ ACME System", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".svg-position svg")).toBeVisible();
   await page
-    .getByRole("button", { name: "＋ PAS System", exact: true })
+    .getByRole("button", { name: "＋ ACME System", exact: true })
     .click();
-  await expect(page.locator(".svg-position svg")).toContainText("PAS API");
+  await expect(page.locator(".svg-position svg")).toContainText("ACME API");
   await edit(page, "flowchart TB\n A[Invalid");
   await expect(page.locator(".error[role=alert]")).toBeVisible();
-  await expect(page.locator(".svg-position svg")).toContainText("PAS API");
+  await expect(page.locator(".svg-position svg")).toContainText("ACME API");
   await expect(page.locator(".stale")).toBeVisible();
   await edit(page, "flowchart LR\n A[Saved idea] --> B[Done]");
   await expect(page.locator(".svg-position svg")).toContainText("Saved idea");
@@ -54,7 +54,17 @@ test("frontmatter, offline rendering and three export formats", async ({
   );
   await expect(page.locator(".svg-position svg")).toContainText("Hello");
   await page.keyboard.press("ControlOrMeta+e");
+  const diagramViewBox = (await page
+    .locator(".svg-position svg")
+    .getAttribute("viewBox"))!
+    .split(/\s+/)
+    .map(Number);
   for (const format of ["SVG", "PNG", "PDF"]) {
+    if (format === "PDF") {
+      await page.getByLabel("PDF Page Size").selectOption("content");
+      await expect(page.getByLabel("Orientation")).toBeDisabled();
+      await expect(page.getByLabel("Fit PDF to page")).toBeDisabled();
+    }
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: format, exact: true }).click();
     const file = await download;
@@ -65,7 +75,14 @@ test("frontmatter, offline rendering and three export formats", async ({
     const bytes = await readFile((await file.path())!);
     if (format === "PNG")
       expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
-    if (format === "PDF") expect(bytes.toString("ascii", 0, 5)).toBe("%PDF-");
+    if (format === "PDF") {
+      const pdf = bytes.toString("latin1");
+      expect(pdf.slice(0, 5)).toBe("%PDF-");
+      const mediaBox = pdf.match(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/);
+      expect(mediaBox).not.toBeNull();
+      expect(Number(mediaBox![1])).toBeCloseTo(diagramViewBox[2] + 40, 1);
+      expect(Number(mediaBox![2])).toBeCloseTo(diagramViewBox[3] + 40, 1);
+    }
     if (format === "SVG") {
       expect(bytes.toString()).toContain("Hello");
       expect(bytes.toString()).toContain("@font-face");
@@ -83,9 +100,7 @@ test("Markdown selection and explicit save/discard/cancel", async ({
   await page.goto("/");
   await expect(page.locator(".svg-position svg")).toBeVisible();
   await page.keyboard.press("ControlOrMeta+,");
-  await page
-    .getByLabel("Automatically save workspace diagrams")
-    .uncheck();
+  await page.getByLabel("Automatically save workspace diagrams").uncheck();
   await page.getByRole("button", { name: "Done" }).click();
   await edit(page, "flowchart LR\n Dirty --> Draft");
   await page.locator("input[type=file]").setInputFiles({
@@ -298,12 +313,25 @@ test("preserves preview zoom/pan on edit, persists split width, and supports ful
     .allTextContents();
   expect(afterOrder).toEqual(beforeOrder);
 
-  // Tab context menu supports Rename and Close Tab
+  // Tab context menu supports individual, other-tab, and all-tab closing.
   await page.locator(".tab-item.active").click({ button: "right" });
   await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Close Tab" })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Close Tab" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Close Other Tabs" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: "Close All Tabs" }),
+  ).toBeVisible();
+  await page.getByRole("menuitem", { name: "Close Other Tabs" }).click();
   await expect(page.locator(".tab-item")).toHaveCount(1);
+  await expect(page.locator(".document-card")).toHaveCount(2);
+
+  await page.locator(".document-card").first().click();
+  await expect(page.locator(".tab-item")).toHaveCount(2);
+  await page.locator(".tab-item.active").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Close All Tabs" }).click();
+  await expect(page.locator(".tab-item")).toHaveCount(0);
   await expect(page.locator(".document-card")).toHaveCount(2);
 });
 
@@ -358,4 +386,83 @@ test("splitter drag, cursor-anchored wheel zoom and tab reordering", async ({
       targetPosition: { x: 4, y: 4 },
     });
   await expect(labels).toHaveText([second, first]);
+});
+
+test("preview nodes and connections reveal their source line", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.locator(".svg-position svg")).toBeVisible();
+  await edit(
+    page,
+    "flowchart LR\n  A[Start]\n  B[Finish]\n  A -->|Go| B\n  A -->|Again| B",
+  );
+  const svg = page.locator(".svg-position svg");
+  await expect(svg).toContainText("Again");
+  await svg.locator(".node").filter({ hasText: "Finish" }).click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Shift+End");
+  await page.keyboard.insertText("  B[Finish edited]");
+  await expect(svg).toContainText("Finish edited");
+  await expect(svg.locator('[data-source-line="5"]').first()).toBeAttached();
+  await svg.locator('.edgeLabel [data-id="L_A_B_2"]').click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Shift+End");
+  await page.keyboard.insertText("  A -->|Changed| B");
+  await expect(svg).toContainText("Changed");
+  await expect(svg).toContainText("Go");
+  await expect(svg).not.toContainText("Again");
+});
+
+test("objects in each non-flowchart template navigate to their source", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.locator(".svg-position svg")).toBeVisible();
+  const cases = [
+    [
+      "sequenceDiagram\nparticipant A as Alice\nA->>B: Repeat\nNote over B: Wait\nB-->>A: Repeat",
+      ".messageText",
+      1,
+      5,
+    ],
+    [
+      "classDiagram\nclass Order {\n+submit()\n}",
+      ".methods-group .label",
+      0,
+      3,
+    ],
+    [
+      "stateDiagram-v2\n[*] --> Draft\nDraft --> Final: Save",
+      ".edgeLabel [data-id]",
+      0,
+      3,
+    ],
+    ["erDiagram\nORDER {\nstring name\nint count\n}", ".attribute-name", 1, 4],
+    [
+      "gantt\ndateFormat YYYY-MM-DD\nsection Plan\nDesign :d, 2026-01-01, 2d",
+      "rect.task",
+      0,
+      4,
+    ],
+    ["mindmap\n  root((Plan))\n    First\n    Second", ".mindmap-node", 2, 4],
+    ['pie showData\n"Tiny": 0.1\n"Other": 99.9', ".slice", 0, 3],
+  ] as const;
+  for (const [code, selector, index, line] of cases) {
+    const preamble = "---\ntitle: Test\n---\n%% comment\n";
+    await edit(page, preamble + code);
+    await page.keyboard.press("ControlOrMeta+Home");
+    const el = page.locator(".svg-position svg").locator(selector).nth(index);
+    await expect(el).toHaveAttribute("data-source-line", String(line + 4));
+    await page.getByRole("button", { name: "Fit", exact: true }).click();
+    const point = await el.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    });
+    await page.mouse.click(point.x, point.y);
+    await expect(page.locator(".active-line-number")).toHaveText(
+      String(line + 4),
+    );
+    await expect(page.locator(".monaco-editor textarea")).toBeFocused();
+  }
 });

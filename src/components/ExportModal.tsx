@@ -72,11 +72,13 @@ export function ExportModal({
           >
             <option value="a4">A4</option>
             <option value="letter">Letter</option>
+            <option value="content">Fit to content (screen / sharing)</option>
           </select>
         </label>
         <label>
           Orientation
           <select
+            disabled={options.page === "content"}
             value={options.orientation}
             onChange={(e) =>
               onOptions((o) => ({
@@ -92,11 +94,20 @@ export function ExportModal({
         <label className="checkbox">
           <input
             type="checkbox"
+            disabled={options.page === "content"}
             checked={options.fit}
-            onChange={(e) => onOptions((o) => ({ ...o, fit: e.target.checked }))}
+            onChange={(e) =>
+              onOptions((o) => ({ ...o, fit: e.target.checked }))
+            }
           />
           Fit PDF to page
         </label>
+        {options.page === "content" && (
+          <p>
+            The PDF page follows the diagram dimensions with a small margin,
+            ideal for viewing and sharing on screen.
+          </p>
+        )}
         <p>
           SVG preserves original labels and embeds Inter. PNG, clipboard, and
           PDF convert HTML labels to SVG text: rich formatting may differ. PDF

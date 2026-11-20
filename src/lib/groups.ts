@@ -70,22 +70,26 @@ function endpointsAt(s: string): [Node[], string] {
     rest = rest.slice(1).trim();
   }
 }
-function parse(source: string) {
+function parse(source: string, navigation = false) {
   const groups = new Map<string, Group>();
-  const statements: Statement[] = [];
+  const statements: (Statement & { line: number })[] = [];
+  // Attach source locations without changing the bounded grammar.
+  const add = (st: Statement) => statements.push({ ...st, line: sourceLine });
+  let sourceLine = 1;
   const stack: string[] = [];
   let frontmatter = false;
   let header = false;
   for (const [idx, line] of source.split("\n").entries()) {
+    sourceLine = idx + 1;
     const s = line.trim();
     const owner = stack.at(-1);
     if (s === "---" && (idx === 0 || frontmatter)) {
       frontmatter = !frontmatter;
-      statements.push({ kind: "raw", raw: line });
+      add({ kind: "raw", raw: line });
       continue;
     }
     if (frontmatter || !s || s.startsWith("%%")) {
-      statements.push({ kind: "raw", raw: line, owner });
+      add({ kind: "raw", raw: line, owner });
       continue;
     }
     if (!header) {
@@ -94,7 +98,7 @@ function parse(source: string) {
           "Group collapsing is only available for flowcharts with an explicit direction.",
         );
       header = true;
-      statements.push({ kind: "raw", raw: line });
+      add({ kind: "raw", raw: line });
       continue;
     }
     const sg = s.match(/^subgraph\s+([A-Za-z_][\w-]*)(?:\s*\[.*\])?\s*$/);
@@ -106,18 +110,22 @@ function parse(source: string) {
         parent: owner,
         members: new Set(),
       });
-      statements.push({ kind: "group", id: sg[1], raw: line, owner });
+      add({ kind: "group", id: sg[1], raw: line, owner });
       stack.push(sg[1]);
       continue;
     }
     if (s === "end") {
       const id = stack.pop();
       if (!id) throw new Error("end without subgraph");
-      statements.push({ kind: "end", id });
+      add({ kind: "end", id });
       continue;
     }
     if (/^(direction\s+(TB|TD|BT|LR|RL)|classDef\s+.+)$/.test(s)) {
-      statements.push({ kind: "raw", raw: line, owner });
+      add({ kind: "raw", raw: line, owner });
+      continue;
+    }
+    if (navigation && /^(linkStyle|click)\s/.test(s)) {
+      add({ kind: "raw", raw: line, owner });
       continue;
     }
     if (/^(linkStyle|click)\s/.test(s))
@@ -126,7 +134,7 @@ function parse(source: string) {
       );
     const cm = s.match(/^class\s+(\S+)\s+([\w-]+)$/);
     if (cm) {
-      statements.push({
+      add({
         kind: "class",
         ids: cm[1].split(","),
         cls: cm[2],
@@ -136,11 +144,13 @@ function parse(source: string) {
     }
     const sm = s.match(/^style\s+([A-Za-z_][\w-]*)\s+.+$/);
     if (sm) {
-      statements.push({ kind: "style", id: sm[1], raw: line, owner });
+      add({ kind: "style", id: sm[1], raw: line, owner });
       continue;
     }
     if (/^(style|class)\s/.test(s))
-      throw new Error(`Group collapsing: unsupported syntax at line ${idx + 1}.`);
+      throw new Error(
+        `Group collapsing: unsupported syntax at line ${idx + 1}.`,
+      );
     const groupsList: Node[][] = [];
     const edges: string[] = [];
     let rest = s;
@@ -165,7 +175,7 @@ function parse(source: string) {
         if (node.raw !== node.id || nodes.length === 1)
           groups.get(id)!.members.add(node.id);
       }
-    statements.push({
+    add({
       kind: "nodes",
       groups: groupsList,
       edges,
@@ -190,13 +200,18 @@ function parse(source: string) {
       }
   return { groups, statements };
 }
-export function collapseFlowchart(source: string, collapsed: string[]): string {
-  if (!collapsed.length) return source;
-  const metadata = groupMetadata(source);
+export function collapseFlowchart(
+  source: string,
+  collapsed: string[],
+  sourceLines?: number[],
+): string {
+  const metadata = collapsed.length ? groupMetadata(source) : [];
+  const active = new Set(metadata.filter((m) => collapsed.includes(m.id)).map((m) => m.id));
+  if (!active.size) {
+    sourceLines?.push(...source.split("\n").map((_, i) => i + 1));
+    return source;
+  }
   const { groups, statements } = parse(source);
-  const active = new Set(
-    collapsed.filter((id) => metadata.some((m) => m.id === id)),
-  );
   for (const id of active)
     if (!groups.has(id)) throw new Error(`Group ${id} not found`);
   function hidden(id?: string): string | undefined {
@@ -217,9 +232,15 @@ export function collapseFlowchart(source: string, collapsed: string[]): string {
     return hidden(id) ?? result;
   }
   const out: string[] = [];
+  let outputLine = 1;
+  const emit = (text: string) => {
+    out.push(text);
+    sourceLines?.push(outputLine);
+  };
   for (const st of statements) {
+    outputLine = st.line;
     if (st.kind === "raw") {
-      if (!hidden(st.owner)) out.push(st.raw);
+      if (!hidden(st.owner)) emit(st.raw);
     }
     if (st.kind === "group") {
       if (!hidden(st.owner)) {
@@ -227,31 +248,31 @@ export function collapseFlowchart(source: string, collapsed: string[]): string {
           const label = metadata
             .find((m) => m.id === st.id)!
             .label.replaceAll('"', "&quot;");
-          out.push(`${st.id}["${label}"]`);
-        } else out.push(st.raw);
+          emit(`${st.id}["${label}"]`);
+        } else emit(st.raw);
       }
     }
     if (st.kind === "end") {
-      if (!hidden(st.id)) out.push("end");
+      if (!hidden(st.id)) emit("end");
     }
     if (st.kind === "class") {
       const ids = st.ids.filter((id) => target(id) === id);
       if (!hidden(st.owner) && ids.length)
-        out.push(`class ${ids.join(",")} ${st.cls}`);
+        emit(`class ${ids.join(",")} ${st.cls}`);
     }
     if (st.kind === "style") {
-      if (!hidden(st.owner) && target(st.id) === st.id) out.push(st.raw);
+      if (!hidden(st.owner) && target(st.id) === st.id) emit(st.raw);
     }
     if (st.kind === "nodes") {
       const all = st.groups.flat();
       const unchanged = all.every((n) => target(n.id) === n.id);
       if (!st.edges.length) {
         // Declarations of collapsed members may live outside the subgraph block.
-        if (!hidden(st.owner) && unchanged) out.push(st.raw);
+        if (!hidden(st.owner) && unchanged) emit(st.raw);
         continue;
       }
       if (!hidden(st.owner) && unchanged) {
-        out.push(st.raw);
+        emit(st.raw);
         continue;
       }
       const seen = new Set<string>();
@@ -266,10 +287,84 @@ export function collapseFlowchart(source: string, collapsed: string[]): string {
             if (hidden(st.owner) && ta === tb) continue;
             if (!seen.has(edge)) {
               seen.add(edge);
-              out.push(edge);
+              emit(edge);
             }
           }
     }
   }
   return out.join("\n");
+}
+
+/** Locations for the flowchart elements emitted by Mermaid. Unsupported grammar
+ * leaves navigation unavailable rather than guessing an unrelated source line. */
+export function flowchartLocations(source: string, lines?: number[]) {
+  const nodes: Record<string, number> = {};
+  const edges: Record<string, number> = {};
+  try {
+    // Split statements only outside labels, retaining the original line numbers.
+    const chunks: string[] = [],
+      originalLines: number[] = [];
+    let chunk = "",
+      lineNumber = 1,
+      startLine = 1,
+      depth = 0,
+      quote = false,
+      pipe = false,
+      comment = false;
+    for (let i = 0; i <= source.length; i++) {
+      const c = source[i] ?? "\n";
+      if (c === "%" && source[i + 1] === "%" && !quote) comment = true;
+      if (!comment) {
+        if (c === '"' && source[i - 1] !== "\\") quote = !quote;
+        if (!quote) {
+          if ("[({".includes(c)) depth++;
+          if ("])}".includes(c)) depth--;
+          if (c === "|" && !depth) pipe = !pipe;
+        }
+      }
+      if (
+        (c === "\n" && ((!depth && !quote) || comment)) ||
+        (c === ";" && !depth && !quote && !pipe && !comment)
+      ) {
+        chunks.push(chunk);
+        originalLines.push(startLine);
+        chunk = "";
+        if (c === "\n") lineNumber++;
+        startLine = lineNumber;
+        comment = false;
+      } else {
+        chunk += c === "\n" ? " " : c;
+        if (c === "\n") lineNumber++;
+      }
+    }
+    const { statements } = parse(chunks.join("\n"), true);
+    const counts = new Map<string, number>();
+    const declared = new Set<string>();
+    for (const st of statements) {
+      const originalLine = originalLines[st.line - 1];
+      const line = lines?.[originalLine - 1] ?? originalLine;
+      if (st.kind === "group") nodes[st.id] ??= line;
+      if (st.kind !== "nodes") continue;
+      for (const n of st.groups.flat()) {
+        nodes[n.id] ??= line;
+        if (!declared.has(n.id) && (n.raw !== n.id || !st.edges.length)) {
+          nodes[n.id] = line;
+          declared.add(n.id);
+        }
+      }
+      for (let i = 0; i < st.edges.length; i++)
+        for (const a of st.groups[i])
+          for (const b of st.groups[i + 1]) {
+            const pair = JSON.stringify([a.id, b.id]);
+            const count = counts.get(pair) ?? 0;
+            counts.set(pair, count + 1);
+            const explicit = st.edges[i].match(/^([\w-]+)@/)?.[1];
+            edges[explicit ?? `L_${a.id}_${b.id}_${count ? count + 1 : 0}`] =
+              line;
+          }
+    }
+  } catch {
+    return { nodes: {}, edges: {} };
+  }
+  return { nodes, edges };
 }

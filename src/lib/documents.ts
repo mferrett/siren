@@ -50,11 +50,11 @@ export function sameDocItems(a: DocItem[], b: DocItem[]): boolean {
 }
 export const examples: Record<string, string> = {
   "Flowchart · groups": `flowchart TB
-    %% @collapse id=PAS label="PAS System"
-    subgraph PAS["PAS System"]
-        API["PAS API"]
+    %% @collapse id=ACME label="ACME System"
+    subgraph ACME["ACME System"]
+        API["ACME API"]
         Service["Request Service"]
-        DB[("PAS Database")]
+        DB[("ACME Database")]
         API --> Service
         Service --> DB
     end

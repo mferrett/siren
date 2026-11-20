@@ -37,7 +37,9 @@ export const Editor = memo(function Editor({
   dark,
   error,
   onChange,
+  navigation,
 }: {
+  navigation?: { docId: string; line: number };
   id: string;
   value: string;
   dark: boolean;
@@ -136,5 +138,20 @@ export const Editor = memo(function Editor({
         : [],
     );
   }, [error, id]);
+  useEffect(() => {
+    const e = editor.current;
+    const model = e?.getModel();
+    if (!e || !model || navigation?.docId !== id) return;
+    const lineNumber = Math.max(
+      1,
+      Math.min(model.getLineCount(), navigation.line),
+    );
+    e.setPosition({
+      lineNumber,
+      column: model.getLineFirstNonWhitespaceColumn(lineNumber) || 1,
+    });
+    e.revealLineInCenter(lineNumber);
+    e.focus();
+  }, [navigation, id]);
   return <div className="monaco-host" ref={host} />;
 });
